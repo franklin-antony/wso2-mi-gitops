@@ -13,7 +13,7 @@ LABEL org.opencontainers.image.description="Hardened WSO2 Micro Integrator 4.3.x
 LABEL org.opencontainers.image.version="4.3.0-hardened"
 LABEL maintainer="platform-team@example.com"
 
-# Install minimal required packages (including bash for hardening scripts)
+# Install minimal required packages (including bash and sed for hardening scripts)
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
@@ -21,6 +21,7 @@ RUN apt-get update && \
       curl \
       ca-certificates \
       bash \
+      sed \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy WSO2 MI from official image

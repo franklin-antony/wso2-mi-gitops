@@ -16,21 +16,30 @@ fi
 
 echo "→ Adding security-hardened JVM options..."
 
-# Backup original script
+# Create a wrapper script with JVM options
+cat > "${MI_HOME}/bin/jvm-security-options.sh" << 'EOF'
+#!/bin/bash
+# Security-hardened JVM options
+export JAVA_OPTS="$JAVA_OPTS -Djava.security.egd=file:/dev/./urandom"
+export JAVA_OPTS="$JAVA_OPTS -Djdk.tls.ephemeralDHKeySize=2048"
+export JAVA_OPTS="$JAVA_OPTS -Djdk.tls.rejectClientInitiatedRenegotiation=true"
+export JAVA_OPTS="$JAVA_OPTS -Dhttps.protocols=TLSv1.2,TLSv1.3"
+export JAVA_OPTS="$JAVA_OPTS -Djdk.tls.client.protocols=TLSv1.2,TLSv1.3"
+EOF
+
+# Make it executable
+chmod +x "${MI_HOME}/bin/jvm-security-options.sh"
+
+# Source this file in the main startup script by prepending it
+# Backup original script first
 cp "$MI_SCRIPT" "${MI_SCRIPT}.bak"
 
-# Add JVM security options before the startup command
-# These options are inserted near the end of the script, before the actual Java invocation
-sed -i '/# ---------- Handle the SSL Issue with proper JAVA_HOME/a \
-\
-# Security-hardened JVM options (added by hardening script)\
-JAVA_OPTS="$JAVA_OPTS -Djava.security.egd=file:/dev/./urandom"\
-JAVA_OPTS="$JAVA_OPTS -Djdk.tls.ephemeralDHKeySize=2048"\
-JAVA_OPTS="$JAVA_OPTS -Djdk.tls.rejectClientInitiatedRenegotiation=true"\
-JAVA_OPTS="$JAVA_OPTS -Dhttps.protocols=TLSv1.2,TLSv1.3"\
-JAVA_OPTS="$JAVA_OPTS -Djdk.tls.client.protocols=TLSv1.2,TLSv1.3"\
-\
-export JAVA_OPTS' "$MI_SCRIPT"
+# Add source command at the beginning of the script (after shebang)
+sed -i '2i\
+# Source security JVM options\
+if [ -f "$(dirname "$0")/jvm-security-options.sh" ]; then\
+    . "$(dirname "$0")/jvm-security-options.sh"\
+fi' "$MI_SCRIPT"
 
 echo "→ JVM security options configured:"
 echo "  ✓ Fast entropy source (non-blocking random)"
