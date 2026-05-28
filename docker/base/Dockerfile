@@ -1,65 +1,44 @@
 # WSO2 Micro Integrator 4.3.x - Hardened Base Image
-# This image is built weekly with security patches and used by all runtime deployments
+# Simplified version with minimal hardening
 
-# Stage 1: Pull official WSO2 MI image
-FROM wso2/wso2mi:4.3.0 AS official
+# Use the official WSO2 MI image directly as base
+FROM wso2/wso2mi:4.3.0
 
-# Stage 2: Build hardened version
-FROM ubuntu:22.04
+# Switch to root to apply hardening
+USER root
+
+# Update packages and install required tools
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends curl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Remove unnecessary packages (if they exist)
+RUN apt-get purge -y --auto-remove wget 2>/dev/null || true
+
+# Set environment variables for JVM security
+ENV JAVA_OPTS="-Djava.security.egd=file:/dev/./urandom \
+-Djdk.tls.ephemeralDHKeySize=2048 \
+-Djdk.tls.rejectClientInitiatedRenegotiation=true \
+-Dhttps.protocols=TLSv1.2,TLSv1.3 \
+-Djdk.tls.client.protocols=TLSv1.2,TLSv1.3"
 
 # Metadata
 LABEL org.opencontainers.image.source="https://github.com/franklin-antony/wso2-mi-gitops"
 LABEL org.opencontainers.image.description="Hardened WSO2 Micro Integrator 4.3.x base image"
 LABEL org.opencontainers.image.version="4.3.0-hardened"
-LABEL maintainer="platform-team@example.com"
 
-# Install minimal required packages (including bash and sed for hardening scripts)
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
-      openjdk-11-jre-headless \
-      curl \
-      ca-certificates \
-      bash \
-      sed \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy WSO2 MI from official image
-COPY --from=official /home/wso2carbon/wso2mi-4.3.0 /home/wso2carbon/wso2mi-4.3.0
-
-# Copy hardening scripts
-COPY hardening-scripts/ /tmp/hardening/
-
-# Apply hardening
-RUN chmod +x /tmp/hardening/*.sh && \
-    bash /tmp/hardening/remove-vulnerabilities.sh && \
-    bash /tmp/hardening/configure-jvm.sh && \
-    rm -rf /tmp/hardening
-
-# Create wso2carbon user (non-root)
-RUN groupadd -r -g 802 wso2 && \
-    useradd -r -u 802 -g wso2 -d /home/wso2carbon -s /bin/bash wso2carbon && \
-    chown -R wso2carbon:wso2 /home/wso2carbon && \
-    chmod -R 755 /home/wso2carbon
-
-# Health check script
-RUN echo '#!/bin/bash\ncurl -f http://localhost:9201/healthz || exit 1' > /usr/local/bin/healthcheck.sh && \
-    chmod +x /usr/local/bin/healthcheck.sh
-
-# Switch to non-root user
+# Switch back to wso2carbon user
 USER wso2carbon
 WORKDIR /home/wso2carbon
 
-# Health check configuration
+# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD /usr/local/bin/healthcheck.sh
+  CMD curl -f http://localhost:9201/healthz || exit 1
 
 # Expose WSO2 MI ports
-# 8290 - HTTP transport
-# 8253 - HTTPS transport
-# 9164 - Management API
-# 9201 - Metrics/Health
 EXPOSE 8290 8253 9164 9201
 
-# Default command - starts WSO2 MI
+# Use default CMD from base image
 CMD ["/home/wso2carbon/wso2mi-4.3.0/bin/micro-integrator.sh"]
