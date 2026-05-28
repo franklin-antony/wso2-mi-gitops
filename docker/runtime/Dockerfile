@@ -1,6 +1,10 @@
 # WSO2 Micro Integrator Runtime Image
 # Multi-stage build: Downloads CARs from Integration CI repo and builds runtime image
 
+# Global ARGs for stage 2 base image (must be before any FROM that uses them)
+ARG BASE_IMAGE_TAG=4.3.0-hardened-latest
+ARG REPOSITORY_OWNER=franklin-antony
+
 # Stage 1: Download CARs from Integration CI repository
 FROM alpine:latest AS downloader
 
@@ -27,9 +31,12 @@ RUN if [ -z "$INTEGRATION_REPO_URL" ]; then \
     ./download-cars.sh "${INTEGRATION_REPO_URL}" "${INTEGRATION_REPO_REF}"
 
 # Stage 2: Runtime image with CARs
-ARG BASE_IMAGE_TAG=4.3.0-hardened-latest
-ARG REPOSITORY_OWNER=franklin-antony
+# Use ARGs declared at the top of Dockerfile
 FROM ghcr.io/${REPOSITORY_OWNER}/wso2-mi-base:${BASE_IMAGE_TAG}
+
+# Re-declare ARGs after FROM so they're available in this build stage
+ARG BASE_IMAGE_TAG
+ARG REPOSITORY_OWNER
 
 # Metadata
 LABEL org.opencontainers.image.source="https://github.com/franklin-antony/wso2-mi-gitops"
