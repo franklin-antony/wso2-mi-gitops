@@ -39,19 +39,21 @@ LABEL org.opencontainers.image.version="runtime"
 # Switch to root for file operations
 USER root
 
-# Copy downloaded CARs from downloader stage
-# Docker layer caching: Only changed CARs trigger rebuild
-COPY --from=downloader --chown=wso2carbon:wso2 /workspace/carbonapps/*.car \
-     /home/wso2carbon/wso2mi-4.3.0/repository/deployment/server/carbonapps/ \
-     2>/dev/null || \
-     echo "No CAR files to copy"
-
-# Copy custom entrypoint
+# Copy custom entrypoint first
 COPY --chown=wso2carbon:wso2 entrypoint.sh /usr/local/bin/custom-entrypoint.sh
 RUN chmod +x /usr/local/bin/custom-entrypoint.sh
 
-# Set proper permissions
-RUN chown -R wso2carbon:wso2 /home/wso2carbon/wso2mi-4.3.0/repository/deployment/server/carbonapps/ && \
+# Copy CARs using RUN with conditional logic (handles empty gracefully)
+RUN --mount=type=bind,from=downloader,source=/workspace/carbonapps,target=/tmp/cars \
+    mkdir -p /home/wso2carbon/wso2mi-4.3.0/repository/deployment/server/carbonapps/ && \
+    if ls /tmp/cars/*.car 1> /dev/null 2>&1; then \
+        cp /tmp/cars/*.car /home/wso2carbon/wso2mi-4.3.0/repository/deployment/server/carbonapps/ && \
+        echo "Copied $(ls /tmp/cars/*.car | wc -l) CAR files"; \
+    else \
+        echo "No CAR files found - deploying empty runtime image"; \
+        echo "No CARs deployed yet" > /home/wso2carbon/wso2mi-4.3.0/repository/deployment/server/carbonapps/README.txt; \
+    fi && \
+    chown -R wso2carbon:wso2 /home/wso2carbon/wso2mi-4.3.0/repository/deployment/server/carbonapps/ && \
     chmod -R 755 /home/wso2carbon/wso2mi-4.3.0/repository/deployment/server/carbonapps/
 
 # Switch back to non-root user

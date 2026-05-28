@@ -47,8 +47,9 @@ if [ -d "carbonapps" ]; then
         echo "✓ Downloaded ${CAR_COUNT} CAR file(s)"
     else
         echo "WARNING: No CAR files found in carbonapps/ folder"
-        echo "Creating empty marker to indicate successful download"
-        touch ../carbonapps/.no-cars
+        echo "This is expected for new/empty Integration CI repositories"
+        echo "Creating placeholder file"
+        echo "No CAR files available yet" > ../carbonapps/README.txt
     fi
 else
     echo "ERROR: carbonapps/ folder not found in repository"
