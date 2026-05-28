@@ -1,0 +1,13 @@
+# Trivy Ignore File for WSO2 MI Base Image
+#
+# Add specific CVEs that are acceptable or have mitigations in place
+# Format: CVE-YYYY-NNNNN  # Reason for ignoring
+#
+# Example:
+# CVE-2023-12345  # Fixed in upcoming WSO2 release, low risk in our deployment
+# CVE-2023-67890  # False positive for our use case
+#
+# Note: Only add CVEs after thorough security review
+# Each exception should be documented and approved by security team
+
+# Placeholder - add specific CVE exceptions as needed

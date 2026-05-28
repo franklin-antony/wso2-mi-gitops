@@ -1,0 +1,43 @@
+# WSO2 MI GitOps CD Repository - .gitignore
+
+# Docker build artifacts
+*.tar
+*.tar.gz
+docker-compose.override.yml
+
+# Helm rendered templates
+helm/**/charts/
+helm/**/Chart.lock
+*.tgz
+
+# Kubernetes secrets (never commit)
+*-secret.yaml
+*-secrets.yaml
+
+# Local testing
+*.local
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Downloaded CARs (for local testing)
+carbonapps/
+*.car
+
+# GitHub Actions artifacts
+.github/workflows/*.log

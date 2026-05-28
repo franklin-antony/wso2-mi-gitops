@@ -1,0 +1,237 @@
+name: Build Runtime Image (CD)
+
+on:
+  # Triggered by Integration CI repo via webhook
+  repository_dispatch:
+    types: [new-integration-build]
+
+  # Manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      integration_repo_url:
+        description: 'Integration CI repository URL'
+        required: true
+        default: 'https://github.com/[org]/wso2-integrations'
+      integration_repo_ref:
+        description: 'Integration CI repo ref (branch/tag/commit)'
+        required: true
+        default: 'main'
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      base_image_tag:
+        description: 'Base image tag to use'
+        required: false
+        default: '4.3.0-hardened-latest'
+
+  # Auto-trigger on runtime Docker changes (for testing)
+  push:
+    branches:
+      - main
+    paths:
+      - 'docker/runtime/**'
+      - '.github/workflows/build-runtime-image.yml'
+
+jobs:
+  build-runtime:
+    name: Build & Deploy Runtime Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # For updating Helm values
+      packages: write  # For pushing to ghcr.io
+      security-events: write  # For uploading Trivy results
+
+    steps:
+      - name: Checkout CD repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set environment variables
+        id: vars
+        run: |
+          # Extract values from workflow_dispatch or repository_dispatch
+          REPO_URL="${{ github.event.inputs.integration_repo_url || github.event.client_payload.repo_url || 'https://github.com/example/wso2-integrations' }}"
+          REPO_REF="${{ github.event.inputs.integration_repo_ref || github.event.client_payload.ref || 'main' }}"
+          ENV="${{ github.event.inputs.environment || github.event.client_payload.environment || 'dev' }}"
+          BASE_TAG="${{ github.event.inputs.base_image_tag || github.event.client_payload.base_image_tag || '4.3.0-hardened-latest' }}"
+
+          echo "repo_url=${REPO_URL}" >> $GITHUB_OUTPUT
+          echo "repo_ref=${REPO_REF}" >> $GITHUB_OUTPUT
+          echo "environment=${ENV}" >> $GITHUB_OUTPUT
+          echo "base_tag=${BASE_TAG}" >> $GITHUB_OUTPUT
+
+          # Generate image tag based on environment
+          if [ "${ENV}" == "prod" ]; then
+            TAG="v1.0.${GITHUB_RUN_NUMBER}"
+          else
+            TAG="${ENV}-$(date +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          fi
+
+          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+
+          echo "image_tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "latest_tag=${ENV}-latest" >> $GITHUB_OUTPUT
+          echo "repo_owner=${REPO_OWNER}" >> $GITHUB_OUTPUT
+
+          # Summary
+          echo "### Build Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${ENV}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Integration Repo:** ${REPO_URL}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Integration Ref:** ${REPO_REF}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Base Image:** ghcr.io/${REPO_OWNER}/wso2-mi-base:${BASE_TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runtime Image Tag:** ${TAG}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build runtime image (test)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/runtime
+          push: false
+          load: true
+          tags: wso2-mi-runtime:test
+          build-args: |
+            INTEGRATION_REPO_URL=${{ steps.vars.outputs.repo_url }}
+            INTEGRATION_REPO_REF=${{ steps.vars.outputs.repo_ref }}
+            BASE_IMAGE_TAG=${{ steps.vars.outputs.base_tag }}
+            REPOSITORY_OWNER=${{ steps.vars.outputs.repo_owner }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run smoke tests
+        run: |
+          chmod +x docker/runtime/smoke-test.sh
+          ./docker/runtime/smoke-test.sh wso2-mi-runtime:test
+
+      - name: Scan runtime image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: wso2-mi-runtime:test
+          format: 'sarif'
+          output: 'trivy-runtime.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'  # Fail on vulnerabilities
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-runtime.sarif'
+          category: 'runtime-image'
+
+      - name: Generate vulnerability report
+        if: always()
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy image --format table \
+            --severity CRITICAL,HIGH,MEDIUM \
+            wso2-mi-runtime:test > trivy-runtime-report.txt || true
+
+          if [ -f trivy-runtime-report.txt ]; then
+            echo "### 🔍 Runtime Image Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat trivy-runtime-report.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Push runtime image to registry
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/runtime
+          push: true
+          tags: |
+            ghcr.io/${{ steps.vars.outputs.repo_owner }}/wso2-mi-runtime:${{ steps.vars.outputs.image_tag }}
+            ghcr.io/${{ steps.vars.outputs.repo_owner }}/wso2-mi-runtime:${{ steps.vars.outputs.latest_tag }}
+          build-args: |
+            INTEGRATION_REPO_URL=${{ steps.vars.outputs.repo_url }}
+            INTEGRATION_REPO_REF=${{ steps.vars.outputs.repo_ref }}
+            BASE_IMAGE_TAG=${{ steps.vars.outputs.base_tag }}
+            REPOSITORY_OWNER=${{ steps.vars.outputs.repo_owner }}
+          cache-from: type=gha
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Update Helm values (dev/staging auto-update)
+        if: steps.vars.outputs.environment != 'prod'
+        run: |
+          # Install yq if not available
+          if ! command -v yq &> /dev/null; then
+            sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+            sudo chmod +x /usr/local/bin/yq
+          fi
+
+          # Update image tag in environment-specific values file
+          VALUES_FILE="helm/wso2-mi/values-${{ steps.vars.outputs.environment }}.yaml"
+
+          if [ -f "${VALUES_FILE}" ]; then
+            yq eval ".image.tag = \"${{ steps.vars.outputs.image_tag }}\"" -i "${VALUES_FILE}"
+
+            # Commit and push
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
+            git add "${VALUES_FILE}"
+            git commit -m "chore: update ${{ steps.vars.outputs.environment }} image to ${{ steps.vars.outputs.image_tag }}"
+            git push
+          else
+            echo "WARNING: ${VALUES_FILE} not found, skipping auto-update"
+          fi
+
+      - name: Create deployment summary
+        if: success()
+        run: |
+          echo "## ✅ Runtime Image Built Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Image Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image:** \`ghcr.io/${{ steps.vars.outputs.repo_owner }}/wso2-mi-runtime:${{ steps.vars.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Latest:** \`ghcr.io/${{ steps.vars.outputs.repo_owner }}/wso2-mi-runtime:${{ steps.vars.outputs.latest_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ steps.vars.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Time:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Source" >> $GITHUB_STEP_SUMMARY
+          echo "- **Integration Repo:** ${{ steps.vars.outputs.repo_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Integration Ref:** ${{ steps.vars.outputs.repo_ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Base Image:** ghcr.io/${{ steps.vars.outputs.repo_owner }}/wso2-mi-base:${{ steps.vars.outputs.base_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deployment" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.vars.outputs.environment }}" == "prod" ]; then
+            echo "⚠️  **Manual deployment required for production**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "To deploy to production:" >> $GITHUB_STEP_SUMMARY
+            echo "1. Update \`helm/wso2-mi/values-prod.yaml\`" >> $GITHUB_STEP_SUMMARY
+            echo "2. Create a PR with the image tag change" >> $GITHUB_STEP_SUMMARY
+            echo "3. After approval, ArgoCD will sync the changes" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✓ Helm values updated automatically" >> $GITHUB_STEP_SUMMARY
+            echo "✓ ArgoCD will auto-sync to ${{ steps.vars.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "## ❌ Runtime Image Build Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The runtime image build failed. Common causes:" >> $GITHUB_STEP_SUMMARY
+          echo "- CAR download failed (Integration CI repo not accessible)" >> $GITHUB_STEP_SUMMARY
+          echo "- Security vulnerabilities detected (CRITICAL or HIGH)" >> $GITHUB_STEP_SUMMARY
+          echo "- Smoke tests failed (MI didn't start correctly)" >> $GITHUB_STEP_SUMMARY
+          echo "- Base image not available" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the job logs above for detailed error messages." >> $GITHUB_STEP_SUMMARY

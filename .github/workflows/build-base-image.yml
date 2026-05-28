@@ -1,0 +1,133 @@
+name: Build Hardened Base Image
+
+on:
+  workflow_dispatch:  # Manual trigger for on-demand builds
+  schedule:
+    - cron: '0 2 * * 0'  # Weekly: Sunday at 2 AM UTC
+  push:
+    branches:
+      - main
+    paths:
+      - 'docker/base/**'
+      - '.github/workflows/build-base-image.yml'
+
+jobs:
+  build-base:
+    name: Build & Scan Base Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image tags
+        id: tags
+        run: |
+          DATE=$(date +%Y%m%d)
+          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "dated=4.3.0-hardened-${DATE}" >> $GITHUB_OUTPUT
+          echo "latest=4.3.0-hardened-latest" >> $GITHUB_OUTPUT
+          echo "repo_owner=${REPO_OWNER}" >> $GITHUB_OUTPUT
+
+      - name: Build base image (test)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/base
+          push: false
+          load: true
+          tags: wso2-mi-base:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: wso2-mi-base:test
+          format: 'sarif'
+          output: 'trivy-base.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'  # Fail build on CRITICAL or HIGH vulnerabilities
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-base.sarif'
+          category: 'base-image'
+
+      - name: Generate vulnerability report
+        if: always()
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy image --format table \
+            --severity CRITICAL,HIGH,MEDIUM \
+            wso2-mi-base:test > trivy-report.txt || true
+
+          if [ -f trivy-report.txt ]; then
+            echo "### 🔍 Vulnerability Scan Results" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat trivy-report.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Push base image to registry
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/base
+          push: true
+          tags: |
+            ghcr.io/${{ steps.tags.outputs.repo_owner }}/wso2-mi-base:${{ steps.tags.outputs.dated }}
+            ghcr.io/${{ steps.tags.outputs.repo_owner }}/wso2-mi-base:${{ steps.tags.outputs.latest }}
+          cache-from: type=gha
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Create build summary
+        if: success()
+        run: |
+          echo "## ✅ Base Image Built Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Image Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dated Tag:** \`ghcr.io/${{ steps.tags.outputs.repo_owner }}/wso2-mi-base:${{ steps.tags.outputs.dated }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Latest Tag:** \`ghcr.io/${{ steps.tags.outputs.repo_owner }}/wso2-mi-base:${{ steps.tags.outputs.latest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Time:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Security Scan" >> $GITHUB_STEP_SUMMARY
+          echo "✓ Passed (no CRITICAL/HIGH vulnerabilities)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Usage" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/${{ steps.tags.outputs.repo_owner }}/wso2-mi-base:${{ steps.tags.outputs.latest }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "## ❌ Base Image Build Failed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The base image build failed. Common causes:" >> $GITHUB_STEP_SUMMARY
+          echo "- Security vulnerabilities detected (CRITICAL or HIGH)" >> $GITHUB_STEP_SUMMARY
+          echo "- Docker build errors" >> $GITHUB_STEP_SUMMARY
+          echo "- Network issues downloading WSO2 MI official image" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the job logs and security scan results above for details." >> $GITHUB_STEP_SUMMARY
