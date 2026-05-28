@@ -13,13 +13,14 @@ LABEL org.opencontainers.image.description="Hardened WSO2 Micro Integrator 4.3.x
 LABEL org.opencontainers.image.version="4.3.0-hardened"
 LABEL maintainer="platform-team@example.com"
 
-# Install minimal required packages
+# Install minimal required packages (including bash for hardening scripts)
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
       openjdk-11-jre-headless \
       curl \
       ca-certificates \
+      bash \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy WSO2 MI from official image
@@ -30,8 +31,8 @@ COPY hardening-scripts/ /tmp/hardening/
 
 # Apply hardening
 RUN chmod +x /tmp/hardening/*.sh && \
-    /tmp/hardening/remove-vulnerabilities.sh && \
-    /tmp/hardening/configure-jvm.sh && \
+    bash /tmp/hardening/remove-vulnerabilities.sh && \
+    bash /tmp/hardening/configure-jvm.sh && \
     rm -rf /tmp/hardening
 
 # Create wso2carbon user (non-root)
