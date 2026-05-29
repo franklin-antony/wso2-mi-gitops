@@ -94,10 +94,32 @@ jobs:
             org.opencontainers.image.created=${{ github.event.repository.updated_at }}
             org.opencontainers.image.revision=${{ github.sha }}
 
-      - name: Build summary
+      - name: Build summary (GITHUB)
         if: success()
         run: |
           echo "### Base Image Published" >> $GITHUB_STEP_SUMMARY
           echo "- \`ghcr.io/${{ steps.tags.outputs.repo_owner }}/wso2-mi-base:${{ steps.tags.outputs.dated }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- \`ghcr.io/${{ steps.tags.outputs.repo_owner }}/wso2-mi-base:${{ steps.tags.outputs.latest }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Built: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+
+      - name: Push base image to Docker Hub
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/base
+          push: true
+          tags: |
+            frankee787/custom-wso2mi:${{ steps.tags.outputs.dated }}
+            frankee787/custom-wso2mi:${{ steps.tags.outputs.latest }}
+          cache-from: type=gha
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+            org.opencontainers.image.revision=${{ github.sha }}  
+            
+      - name: Build summary (DOCKER)
+        if: success()
+        run: |
+          echo "### Custom WSO2 MI Image Published" >> $GITHUB_STEP_SUMMARY
+          echo "- \`docker.io/frankee787/custom-wso2mi:${{ steps.tags.outputs.dated }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`docker.io/frankee787/custom-wso2mi:${{ steps.tags.outputs.latest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Built: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY            
