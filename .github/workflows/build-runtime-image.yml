@@ -56,7 +56,7 @@ jobs:
       - name: Set environment variables
         id: vars
         run: |
-          # Extract values from workflow_dispatch or repository_dispatch
+          # Extract values with fallback chain: manual trigger → webhook → defaults
           REPO_URL="${{ github.event.inputs.integration_repo_url || github.event.client_payload.repo_url || 'https://github.com/example/wso2-integrations' }}"
           REPO_REF="${{ github.event.inputs.integration_repo_ref || github.event.client_payload.ref || 'main' }}"
           ENV="${{ github.event.inputs.environment || github.event.client_payload.environment || 'dev' }}"
@@ -113,7 +113,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Run smoke tests
+      - name: Run smoke tests  # Verify MI starts and accepts requests
         run: |
           chmod +x docker/runtime/smoke-test.sh
           ./docker/runtime/smoke-test.sh wso2-mi-runtime:test
@@ -125,7 +125,8 @@ jobs:
           format: 'sarif'
           output: 'trivy-runtime.sarif'
           severity: 'CRITICAL,HIGH'
-          exit-code: '0'  # Report vulnerabilities but don't fail build (temporarily)
+          # TODO: Set exit-code to '1' once runtime vulnerabilities are resolved
+          exit-code: '0'
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
@@ -133,22 +134,6 @@ jobs:
         with:
           sarif_file: 'trivy-runtime.sarif'
           category: 'runtime-image'
-
-      - name: Generate vulnerability report
-        if: always()
-        run: |
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            aquasec/trivy image --format table \
-            --severity CRITICAL,HIGH,MEDIUM \
-            wso2-mi-runtime:test > trivy-runtime-report.txt || true
-
-          if [ -f trivy-runtime-report.txt ]; then
-            echo "### 🔍 Runtime Image Vulnerability Scan" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat trivy-runtime-report.txt >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          fi
 
       - name: Push runtime image to registry
         uses: docker/build-push-action@v5
@@ -169,7 +154,7 @@ jobs:
             org.opencontainers.image.created=${{ github.event.repository.updated_at }}
             org.opencontainers.image.revision=${{ github.sha }}
 
-      - name: Update Helm values (dev/staging auto-update)
+      - name: Update Helm values (dev/staging auto-update)  # Prod requires manual PR
         if: steps.vars.outputs.environment != 'prod'
         run: |
           # Install yq if not available
@@ -194,44 +179,14 @@ jobs:
             echo "WARNING: ${VALUES_FILE} not found, skipping auto-update"
           fi
 
-      - name: Create deployment summary
+      - name: Deployment summary
         if: success()
         run: |
-          echo "## ✅ Runtime Image Built Successfully" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Image Details" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image:** \`ghcr.io/${{ steps.vars.outputs.repo_owner }}/wso2-mi-runtime:${{ steps.vars.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Latest:** \`ghcr.io/${{ steps.vars.outputs.repo_owner }}/wso2-mi-runtime:${{ steps.vars.outputs.latest_tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** ${{ steps.vars.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build Time:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Source" >> $GITHUB_STEP_SUMMARY
-          echo "- **Integration Repo:** ${{ steps.vars.outputs.repo_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Integration Ref:** ${{ steps.vars.outputs.repo_ref }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Base Image:** ghcr.io/${{ steps.vars.outputs.repo_owner }}/wso2-mi-base:${{ steps.vars.outputs.base_tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "### Runtime Image Published" >> $GITHUB_STEP_SUMMARY
+          echo "- \`ghcr.io/${{ steps.vars.outputs.repo_owner }}/wso2-mi-runtime:${{ steps.vars.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`ghcr.io/${{ steps.vars.outputs.repo_owner }}/wso2-mi-runtime:${{ steps.vars.outputs.latest_tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Environment: ${{ steps.vars.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Built: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
           if [ "${{ steps.vars.outputs.environment }}" == "prod" ]; then
-            echo "⚠️  **Manual deployment required for production**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "To deploy to production:" >> $GITHUB_STEP_SUMMARY
-            echo "1. Update \`helm/wso2-mi/values-prod.yaml\`" >> $GITHUB_STEP_SUMMARY
-            echo "2. Create a PR with the image tag change" >> $GITHUB_STEP_SUMMARY
-            echo "3. After approval, ArgoCD will sync the changes" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "✓ Helm values updated automatically" >> $GITHUB_STEP_SUMMARY
-            echo "✓ ArgoCD will auto-sync to ${{ steps.vars.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+            echo "- ⚠️  Manual PR required for prod deployment" >> $GITHUB_STEP_SUMMARY
           fi
-
-      - name: Notify on failure
-        if: failure()
-        run: |
-          echo "## ❌ Runtime Image Build Failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The runtime image build failed. Common causes:" >> $GITHUB_STEP_SUMMARY
-          echo "- CAR download failed (Integration CI repo not accessible)" >> $GITHUB_STEP_SUMMARY
-          echo "- Security vulnerabilities detected (CRITICAL or HIGH)" >> $GITHUB_STEP_SUMMARY
-          echo "- Smoke tests failed (MI didn't start correctly)" >> $GITHUB_STEP_SUMMARY
-          echo "- Base image not available" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Check the job logs above for detailed error messages." >> $GITHUB_STEP_SUMMARY
