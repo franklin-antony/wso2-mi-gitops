@@ -78,7 +78,7 @@ gh run watch
    - Wait for WSO2 to release patched version
 
 2. **Docker build fails**
-   - Check if WSO2 official image is accessible: `wso2/wso2mi:4.3.0`
+   - Check if WSO2 official image is accessible: `registry.wso2.com/wso2-integrator/mi@sha256:c5c5497c96e00136ef30992136becd689d41c6731217dc645db5ddb440ecba5e`
    - Verify Dockerfile syntax
    - Check hardening scripts execute without errors
 

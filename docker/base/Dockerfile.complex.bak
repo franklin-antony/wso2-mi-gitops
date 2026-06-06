@@ -2,7 +2,7 @@
 # This image is built weekly with security patches and used by all runtime deployments
 
 # Stage 1: Pull official WSO2 MI image
-FROM wso2/wso2mi:4.3.0 AS official
+FROM registry.wso2.com/wso2-integrator/mi@sha256:c5c5497c96e00136ef30992136becd689d41c6731217dc645db5ddb440ecba5e AS official
 
 # Stage 2: Build hardened version
 FROM ubuntu:22.04
