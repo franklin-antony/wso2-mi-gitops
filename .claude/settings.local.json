@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "PowerShell(git add *)",
+      "PowerShell(git *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(gh run *)",
+      "Bash(D:/Softwares/GitHub-Client-CLI/gh.exe run *)",
+      "Bash(D:/Softwares/GitHub-Client-CLI/gh.exe workflow *)",
+      "Bash(D:/Softwares/GitHub-Client-CLI/gh.exe api *)",
+      "Bash(npx --yes yaml-lint .github/workflows/build-runtime-image.yml)",
+      "Bash(git pull *)"
+    ]
+  }
+}
