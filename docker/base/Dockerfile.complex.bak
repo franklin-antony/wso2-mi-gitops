@@ -8,10 +8,9 @@ FROM registry.wso2.com/wso2-integrator/mi@sha256:c5c5497c96e00136ef30992136becd6
 FROM ubuntu:22.04
 
 # Metadata
-LABEL org.opencontainers.image.source="https://github.com/franklin-antony/wso2-mi-gitops"
+
 LABEL org.opencontainers.image.description="Hardened WSO2 Micro Integrator 4.3.x base image"
 LABEL org.opencontainers.image.version="4.3.0-hardened"
-LABEL maintainer="platform-team@example.com"
 
 # Install minimal required packages (including bash and sed for hardening scripts)
 RUN apt-get update && \
